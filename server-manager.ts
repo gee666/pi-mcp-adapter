@@ -1,4 +1,3 @@
-// server-manager.ts - MCP connection management (stdio + HTTP)
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -14,6 +13,7 @@ import type {
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
 import { getStoredTokens } from "./oauth-handler.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
+import { logger } from "./logger.js";
 
 interface ServerConnection {
   client: Client;
@@ -75,7 +75,7 @@ export class McpServerManager {
         if (resolved) {
           command = resolved.isJs ? "node" : resolved.binPath;
           args = resolved.isJs ? [resolved.binPath, ...resolved.extraArgs] : resolved.extraArgs;
-          console.log(`MCP: ${name} resolved to ${resolved.binPath} (skipping npm parent)`);
+          logger.debug(`${name} resolved to ${resolved.binPath} (skipping npm parent)`);
         }
       }
 

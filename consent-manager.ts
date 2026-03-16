@@ -29,12 +29,12 @@ export class ConsentManager {
 
     if (approved) {
       this.approvedServers.add(serverName);
-      this.log.info("Consent granted", { server: serverName });
+      this.log.debug("Consent granted", { server: serverName });
       return;
     }
 
     this.deniedServers.add(serverName);
-    this.log.info("Consent denied", { server: serverName });
+    this.log.debug("Consent denied", { server: serverName });
   }
 
   ensureApproved(serverName: string): void {

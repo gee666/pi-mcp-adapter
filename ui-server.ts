@@ -57,6 +57,7 @@ export interface UiServerHandle {
   serverName: string;
   toolName: string;
   close: (reason?: string) => void;
+  sendToolInput: (args: Record<string, unknown>) => void;
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;
   sendToolCancelled: (reason: string) => void;
@@ -219,7 +220,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
   const markCompleted = (reason: string) => {
     if (completed) return;
-    log.info("Session completed", { reason });
+    log.debug("Session completed", { reason });
     pushEvent("session-complete", { reason });
     completed = true;
     stopWatchdog();
@@ -369,7 +370,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         // Must match the order in index.ts onMessage handler
         if (promptText) {
           sessionMessages.prompts.push(promptText);
-          log.info("UI prompt received", { prompt: promptText.slice(0, 100) });
+          log.debug("UI prompt received", { prompt: promptText.slice(0, 100) });
         } else if (msgParams.type === "intent" || msgParams.intent) {
           const intentName = msgParams.intent ?? "";
           if (intentName) {
@@ -377,13 +378,13 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               intent: intentName, 
               params: msgParams.params 
             });
-            log.info("UI intent received", { intent: intentName });
+            log.debug("UI intent received", { intent: intentName });
           }
         } else if (msgParams.type === "notify" || msgParams.message) {
           const notifyText = msgParams.message ?? "";
           if (notifyText) {
             sessionMessages.notifications.push(notifyText);
-            log.info("UI notification", { message: notifyText.slice(0, 100) });
+            log.debug("UI notification", { message: notifyText.slice(0, 100) });
           }
         }
         
@@ -504,7 +505,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         return;
       }
 
-      log.info("Server started", { port: address.port });
+      log.debug("Server started", { port: address.port });
 
       const handle: UiServerHandle = {
         url: `http://localhost:${address.port}/?session=${sessionToken}`,
@@ -518,6 +519,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             server.close();
           } catch {}
           closeSse();
+        },
+        sendToolInput: (args: Record<string, unknown>) => {
+          pushEvent("tool-input", { arguments: args });
         },
         sendToolResult: (result: CallToolResult) => {
           pushEvent("tool-result", result);

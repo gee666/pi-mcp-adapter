@@ -1,6 +1,6 @@
-// lifecycle.ts - Connection health checks and reconnection
 import type { ServerDefinition } from "./types.js";
 import type { McpServerManager } from "./server-manager.js";
+import { logger } from "./logger.js";
 
 export type ReconnectCallback = (serverName: string) => void;
 
@@ -59,7 +59,7 @@ export class McpLifecycleManager {
       if (!connection || connection.status !== "connected") {
         try {
           await this.manager.connect(name, definition);
-          console.log(`MCP: Reconnected to ${name}`);
+          logger.debug(`Reconnected to ${name}`);
           // Notify extension to update metadata
           this.onReconnect?.(name);
         } catch (error) {

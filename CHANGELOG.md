@@ -33,27 +33,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `SessionError`, `ServerError` - Session and server lifecycle errors
   - `wrapError()` helper for consistent error handling
 
-- **Test suite** - 88 unit tests covering:
+- **Test suite** - 178 tests covering:
   - Consent manager modes and state transitions
   - UI resource handler parsing and validation
   - Host HTML template generation and XSS prevention
   - Logger levels, context, and handlers
   - Error types and helper functions
 
-- **Local interactive visualizer example** - Added `examples/interactive-visualizer`, a repo-local custom MCP server example for rich MCP UI rendering:
-  - `show_visualization` renders typed Mermaid, chart, and custom explainer specs
-  - `show_visualization_gallery` opens five trusted built-in examples
-  - Pattern-aware spec fields for `pattern`, `chrome`, `initialState`, declarative controls, and chart `summaryMetrics`
-  - Shared self-contained HTML app resource bundled for blob-iframe hosting
-  - Local explore/annotate workflow with canonical `visualization_annotations_submitted\n{...}` handoff envelopes
-  - `mcp({ action: "ui-messages" })` now normalizes canonical handoff prompts back into structured intent-style details
-  - Example-local `install-local` and `uninstall-local` scripts for idempotent config management
-  - Stream-first `show_visualization` sessions with adapter-owned intermediate result patches, phased live-build UI updates, checkpoint/final envelopes, and annotation handoff metadata (`streamId`/`sequence`)
-  - Focused test coverage for schema validation, server registration, annotation state, runtime defaults, handoff normalization, and streaming transport/runtime behavior
+- **Interactive visualizer example** (`examples/interactive-visualizer`) - Minimal MCP server demonstrating charts, bidirectional communication, and streaming:
+  - `show_chart` tool renders bar, line, pie, and doughnut charts via Chart.js
+  - Progressive streaming: datasets arrive one at a time, chart builds live
+  - Bidirectional messaging: send text from the UI back to the agent
+  - Self-contained HTML app bundled for iframe hosting
+
+- **Glimpse integration** - MCP UI opens in a native macOS WKWebView window instead of a browser tab when `glimpseui` is installed (`npm install -g glimpseui`). Falls back to browser on non-macOS or when unavailable. Override with `MCP_UI_VIEWER=browser` or `MCP_UI_VIEWER=glimpse`.
+
+### Fixed
+- Host-iframe timing: bridge now connects before loading iframe, fixing `ui/initialize` timeout on first load
+- All internal `log.info` calls demoted to `log.debug` to eliminate stdout noise during normal use
 
 ### Technical Notes
 - Uses local minified AppBridge bundle (408KB) to avoid CDN Zod bundling issues
-- Blob URL iframe approach with null eventSource for cross-origin compatibility
+- Serves app HTML from `/ui-app` endpoint instead of blob URLs to avoid iframe sandbox issues
 - SSE for real-time tool result streaming to browser
 
 ## [2.1.2] - 2026-02-03

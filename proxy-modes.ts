@@ -5,7 +5,7 @@ import { getServerPrefix, parseUiPromptHandoff } from "./types.js";
 import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar } from "./init.js";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
-import { maybeStartUiSession } from "./ui-session.js";
+import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { truncateAtWord } from "./utils.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
@@ -520,6 +520,8 @@ export async function executeCall(
     }
   }
 
+  let uiSession: UiSessionRuntime | null = null;
+
   try {
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
@@ -536,7 +538,7 @@ export async function executeCall(
       };
     }
 
-    const uiSession = toolMeta.uiResourceUri
+    uiSession = toolMeta.uiResourceUri
       ? await maybeStartUiSession(state, {
           serverName,
           toolName: toolMeta.originalName,
@@ -575,8 +577,11 @@ export async function executeCall(
       }
 
       const resultText = mcpText || "(empty result)";
+      const uiMessage = uiSession?.reused
+        ? "Updated the open UI."
+        : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
       return {
-        content: [{ type: "text" as const, text: `${resultText}\n\n📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.` }],
+        content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
         details: { mode: "call", mcpResult: result, server: serverName, tool: toolMeta.originalName, uiOpen: true },
       };
     }
@@ -609,9 +614,7 @@ export async function executeCall(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (state.uiServer) {
-      state.uiServer.sendToolCancelled(message);
-    }
+    uiSession?.sendToolCancelled(message);
 
     let errorWithSchema = `Failed to call tool: ${message}`;
     if (toolMeta.inputSchema) {
@@ -623,6 +626,9 @@ export async function executeCall(
       details: { mode: "call", error: "call_failed", message },
     };
   } finally {
+    if (uiSession?.reused) {
+      uiSession.close();
+    }
     state.manager.decrementInFlight(serverName);
     state.manager.touch(serverName);
   }

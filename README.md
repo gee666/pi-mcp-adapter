@@ -178,24 +178,20 @@ Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so
 
 ### MCP UI Integration
 
-Some MCP tools come with interactive browser UIs — dashboards, forms, visualizations. When you call a tool that has a UI resource, it opens automatically in your browser.
+MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-Org/mcp-ui) standard. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
 
 **How it works:**
 
 1. Agent calls a tool like `launch_dashboard`
 2. The tool's metadata includes `_meta.ui.resourceUri` pointing to a UI resource
-3. pi-mcp-adapter fetches the UI HTML and opens it in a sandboxed browser iframe
+3. pi-mcp-adapter fetches the UI HTML and opens it in an iframe
 4. The UI can call MCP tools and send messages back to the agent
 
-**Bidirectional communication:**
+**Native rendering:** On macOS, if [Glimpse](https://github.com/hazat/glimpse) is installed (`pi install npm:glimpseui`), UIs open in a native WKWebView window instead of a browser tab. Set `MCP_UI_VIEWER=browser` to force the browser, or `MCP_UI_VIEWER=glimpse` to require native rendering.
 
-The UI isn't just a display — it talks back. When the UI sends a prompt or intent:
+**Bidirectional communication:** The UI talks back. When it sends a prompt or intent, the message is stored and `triggerTurn()` wakes the agent. The agent retrieves messages via `mcp({ action: "ui-messages" })` and responds, enabling conversational UIs where the app and agent collaborate in real-time.
 
-- The message is stored and `triggerTurn()` wakes the agent
-- The agent retrieves messages via `mcp({ action: "ui-messages" })`
-- The agent responds, and the cycle continues
-
-This enables conversational UIs where the browser app and agent collaborate in real-time.
+**Session reuse:** When the agent calls the same tool again while its UI is already open, the adapter pushes the new result to the existing window instead of replacing it. This enables live updates — the agent can refine a chart, add data, or respond to user input without losing the current view. Different tools still replace the session as before.
 
 **Message types from UI:**
 
@@ -223,31 +219,21 @@ Returns accumulated messages from UI sessions. Each message includes `type`, `se
 
 **Technical notes:**
 
-- UIs run in sandboxed iframes with configurable CSP
-- Tool consent can be required before UI calls tools (never/once-per-server/always)
+- Tool consent gates whether UIs can call MCP tools (never/once-per-server/always)
 - Works with both stdio and HTTP MCP servers
 - Uses a local 408KB AppBridge bundle (MCP SDK + Zod) for browser↔server communication
 
 ### Local Example: Interactive Visualizer
 
-This repo now includes a full local MCP UI example at `examples/interactive-visualizer`.
-
-It shows how to ship one shared `ui://...` app resource that renders pre-generated interactive content locally, supports Mermaid and charts and custom explainers, exposes declarative view/layer/step controls plus chart summary metrics, and sends one final structured annotation payload back to the agent.
-
-From `examples/interactive-visualizer`:
+A minimal MCP UI example at `examples/interactive-visualizer` demonstrating charts, bidirectional messaging, and streaming. From that directory:
 
 ```bash
 npm install
+npm run build
 npm run install-local
 ```
 
-Restart Pi so the new MCP entry is loaded, then open the bundled gallery with:
-
-```ts
-mcp({ tool: "interactive_visualizer_show_visualization_gallery", args: '{}' })
-```
-
-Use `npm run uninstall-local` from the same directory to remove the local MCP entry.
+Restart pi, then ask the agent to show a chart — it calls `show_chart` and opens the UI in Glimpse (macOS) or the browser. Use `npm run uninstall-local` to remove the MCP entry.
 
 ### Import Existing Configs
 

@@ -57,6 +57,7 @@
     "ui-resource-handler.ts",
     "consent-manager.ts",
     "ui-server.ts",
+    "glimpse-ui.ts",
     "npx-resolver.ts",
     "oauth-handler.ts",
     "mcp-panel.ts",

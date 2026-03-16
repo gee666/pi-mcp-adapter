@@ -20,6 +20,7 @@ import { McpServerManager } from "./server-manager.js";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.js";
 import { UiResourceHandler } from "./ui-resource-handler.js";
 import { openUrl, parallelLimit } from "./utils.js";
+import { logger } from "./logger.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
@@ -193,7 +194,7 @@ export async function initializeMcp(
 
   lifecycle.setIdleShutdownCallback((serverName) => {
     const idleMinutes = getEffectiveIdleTimeoutMinutes(state, serverName);
-    console.log(`MCP: ${serverName} shut down (idle ${idleMinutes}m)`);
+    logger.debug(`${serverName} shut down (idle ${idleMinutes}m)`);
     updateStatusBar(state);
   });
 

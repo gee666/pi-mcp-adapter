@@ -6,7 +6,7 @@ import { lazyConnect, getFailureAgeSeconds } from "./init.js";
 import { isServerCacheValid } from "./metadata-cache.js";
 import { formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
-import { maybeStartUiSession } from "./ui-session.js";
+import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
 import { formatToolName } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 
@@ -212,6 +212,8 @@ export function createDirectToolExecutor(
       };
     }
 
+    let uiSession: UiSessionRuntime | null = null;
+
     try {
       state.manager.touch(spec.serverName);
       state.manager.incrementInFlight(spec.serverName);
@@ -229,7 +231,7 @@ export function createDirectToolExecutor(
       }
 
       const hasUi = !!spec.uiResourceUri;
-      const uiSession = hasUi
+      uiSession = hasUi
         ? await maybeStartUiSession(state, {
             serverName: spec.serverName,
             toolName: spec.originalName,
@@ -264,8 +266,11 @@ export function createDirectToolExecutor(
 
       const resultText = content.filter(c => c.type === "text").map(c => (c as { text: string }).text).join("\n") || "(empty result)";
       if (hasUi) {
+        const uiMessage = uiSession?.reused
+          ? "Updated the open UI."
+          : "📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.";
         return {
-          content: [{ type: "text" as const, text: `${resultText}\n\n📺 Interactive UI is now open in your browser. I'll respond to your prompts and intents as you interact with it.` }],
+          content: [{ type: "text" as const, text: `${resultText}\n\n${uiMessage}` }],
           details: { server: spec.serverName, tool: spec.originalName, uiOpen: true },
         };
       }
@@ -276,7 +281,7 @@ export function createDirectToolExecutor(
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      state.uiServer?.sendToolCancelled(message);
+      uiSession?.sendToolCancelled(message);
       let errorText = `Failed to call tool: ${message}`;
       if (spec.inputSchema) {
         errorText += `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}`;
@@ -286,6 +291,9 @@ export function createDirectToolExecutor(
         details: { error: "call_failed", server: spec.serverName },
       };
     } finally {
+      if (uiSession?.reused) {
+        uiSession.close();
+      }
       state.manager.decrementInFlight(spec.serverName);
       state.manager.touch(spec.serverName);
     }

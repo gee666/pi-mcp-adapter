@@ -13,6 +13,9 @@ import {
 } from "./types.js";
 import { logger } from "./logger.js";
 import { startUiServer, type UiServerHandle } from "./ui-server.js";
+import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.js";
+
+let activeGlimpseWindow: { close(): void } | null = null;
 
 export interface UiSessionRequest {
   serverName: string;
@@ -25,6 +28,7 @@ export interface UiSessionRequest {
 export interface UiSessionRuntime {
   serverName: string;
   toolName: string;
+  reused: boolean;
   streamId?: string;
   streamToken?: string;
   streamMode?: UiStreamMode;
@@ -73,6 +77,16 @@ function withStreamEnvelope(
   };
 }
 
+async function openInBrowser(state: McpExtensionState, url: string): Promise<void> {
+  try {
+    await state.openBrowser(url);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    state.ui?.notify(`MCP UI browser open failed: ${message}`, "warning");
+    state.ui?.notify(`Open manually: ${url}`, "info");
+  }
+}
+
 export async function maybeStartUiSession(
   state: McpExtensionState,
   request: UiSessionRequest,
@@ -84,11 +98,87 @@ export async function maybeStartUiSession(
   });
 
   try {
+    if (
+      state.uiServer &&
+      state.uiServer.serverName === request.serverName &&
+      state.uiServer.toolName === request.toolName
+    ) {
+      const existingHandle = state.uiServer;
+      const streamMode = request.streamMode;
+      const streamId = streamMode ? randomUUID() : undefined;
+      const streamToken = streamMode ? randomUUID() : undefined;
+      let active = true;
+      let nextStreamSequence = 0;
+
+      const cleanupStreamListener = () => {
+        if (streamToken) {
+          state.manager.removeUiStreamListener(streamToken);
+        }
+      };
+
+      existingHandle.sendToolInput(request.toolArgs);
+
+      if (streamToken) {
+        state.manager.registerUiStreamListener(streamToken, (serverName, notification) => {
+          if (!active || state.uiServer !== existingHandle) return;
+          if (serverName !== request.serverName) return;
+          nextStreamSequence += 1;
+          existingHandle.sendResultPatch(
+            withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence),
+          );
+        });
+      }
+
+      return {
+        serverName: request.serverName,
+        toolName: request.toolName,
+        reused: true,
+        streamId,
+        streamToken,
+        streamMode,
+        requestMeta: streamToken ? { [UI_STREAM_REQUEST_META_KEY]: streamToken } : undefined,
+        url: existingHandle.url,
+        isActive: () => active && state.uiServer === existingHandle,
+        sendToolResult: (result: CallToolResult) => {
+          if (!active || state.uiServer !== existingHandle) return;
+          nextStreamSequence += 1;
+          existingHandle.sendToolResult(withStreamEnvelope(result, streamId, nextStreamSequence));
+        },
+        sendResultPatch: (result: CallToolResult) => {
+          if (!active || state.uiServer !== existingHandle) return;
+          nextStreamSequence += 1;
+          existingHandle.sendResultPatch(withStreamEnvelope(result, streamId, nextStreamSequence));
+        },
+        sendToolCancelled: (reason: string) => {
+          if (!active || state.uiServer !== existingHandle) return;
+          nextStreamSequence += 1;
+          existingHandle.sendToolResult(
+            withStreamEnvelope(
+              {
+                isError: true,
+                content: [{ type: "text", text: reason }],
+              },
+              streamId,
+              nextStreamSequence,
+            ),
+          );
+        },
+        close: () => {
+          active = false;
+          cleanupStreamListener();
+        },
+      };
+    }
+
     const resource = await state.uiResourceHandler.readUiResource(request.serverName, request.uiResourceUri);
 
     if (state.uiServer) {
       state.uiServer.close("replaced");
       state.uiServer = null;
+    }
+    if (activeGlimpseWindow) {
+      activeGlimpseWindow.close();
+      activeGlimpseWindow = null;
     }
 
     const streamMode = request.streamMode;
@@ -137,7 +227,7 @@ export async function maybeStartUiSession(
               },
               { triggerTurn: true },
             );
-            log.info("Triggered agent turn for UI prompt", { prompt: prompt.slice(0, 50) });
+            log.debug("Triggered agent turn for UI prompt", { prompt: prompt.slice(0, 50) });
           }
         } else if (params.type === "intent" || params.intent) {
           const intent = params.intent ?? "";
@@ -153,7 +243,7 @@ export async function maybeStartUiSession(
               },
               { triggerTurn: true },
             );
-            log.info("Triggered agent turn for UI intent", { intent });
+            log.debug("Triggered agent turn for UI intent", { intent });
           }
         } else if (params.type === "notify" || params.message) {
           const text = params.message ?? "";
@@ -197,7 +287,7 @@ export async function maybeStartUiSession(
               state.completedUiSessions.shift();
             }
 
-            log.info("Session completed", {
+            log.debug("Session completed", {
               reason,
               prompts: messages.prompts.length,
               intents: messages.intents.length,
@@ -207,6 +297,10 @@ export async function maybeStartUiSession(
           }
 
           state.uiServer = null;
+          if (activeGlimpseWindow) {
+            activeGlimpseWindow.close();
+            activeGlimpseWindow = null;
+          }
         }
       },
     });
@@ -222,17 +316,36 @@ export async function maybeStartUiSession(
 
     state.uiServer = handle;
 
-    try {
-      await state.openBrowser(handle.url);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      state.ui?.notify(`MCP UI browser open failed: ${message}`, "warning");
-      state.ui?.notify(`Open manually: ${handle.url}`, "info");
+    const glimpseDetected = isGlimpseAvailable();
+    const viewerPref = process.env.MCP_UI_VIEWER?.toLowerCase();
+    const useGlimpse = viewerPref === "glimpse" ||
+      (viewerPref !== "browser" && glimpseDetected);
+
+    if (useGlimpse) {
+      try {
+        const glimpseHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
+        activeGlimpseWindow = await openGlimpseWindow(glimpseHtml, {
+          title: `MCP · ${request.serverName} · ${request.toolName}`,
+          width: 1000,
+          height: 800,
+          onClosed: () => {
+            if (active) handle.close("glimpse-closed");
+          },
+        });
+      } catch (error) {
+        log.debug("Glimpse unavailable, using browser", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await openInBrowser(state, handle.url);
+      }
+    } else {
+      await openInBrowser(state, handle.url);
     }
 
     return {
       serverName: request.serverName,
       toolName: request.toolName,
+      reused: false,
       streamId,
       streamToken,
       streamMode,

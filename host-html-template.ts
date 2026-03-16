@@ -244,7 +244,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     };
 
     bridge.oninitialized = () => {
-      console.log("[host] oninitialized called, sending tool input");
       if (streamMode !== "stream-first") {
         bridge.sendToolInput({ arguments: TOOL_ARGS });
       }
@@ -265,28 +264,28 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     }
 
     // Connect bridge BEFORE loading iframe to ensure we're listening when the app sends ui/initialize
-    // We use window as the message target initially, then the iframe will post to us
     try {
-      console.log("[host] Connecting bridge (listening for messages)...");
-      // Create transport that sends to iframe.contentWindow but we connect before iframe loads
-      // The transport will start listening on window immediately
       const transport = new PostMessageTransport(iframe.contentWindow, null);
       await bridge.connect(transport);
-      console.log("[host] Bridge connected, now loading iframe...");
     } catch (error) {
       console.error("[host] Bridge connection failed:", error);
       showError("Failed to initialize AppBridge: " + String(error));
     }
 
-    // NOW load the iframe - the host is already listening for messages
     const iframeLoaded = new Promise((resolve) => {
       iframe.onload = resolve;
     });
     iframe.src = "/ui-app?session=" + encodeURIComponent(SESSION_TOKEN);
     await iframeLoaded;
-    console.log("[host] Iframe loaded");
 
     const eventSource = new EventSource("/events?session=" + encodeURIComponent(SESSION_TOKEN));
+    eventSource.addEventListener("tool-input", (event) => {
+      try {
+        bridge.sendToolInput(JSON.parse(event.data));
+      } catch (error) {
+        showError("Failed to forward tool input: " + String(error));
+      }
+    });
     eventSource.addEventListener("tool-result", (event) => {
       try {
         bridge.sendToolResult(JSON.parse(event.data));
