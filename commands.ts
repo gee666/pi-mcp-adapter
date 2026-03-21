@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import type { McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult } from "./types.js";
-import { getServerProvenance, writeDirectToolsConfig } from "./config.js";
+import { getOAuthTokensPath, getServerProvenance, writeDirectToolsConfig } from "./config.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { getStoredTokens } from "./oauth-handler.js";
@@ -143,7 +143,7 @@ export async function authenticateServer(
     return;
   }
 
-  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
+  const tokenPath = getOAuthTokensPath(serverName);
 
   ctx.ui.notify(
     `OAuth setup for "${serverName}":\n\n` +
