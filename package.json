@@ -1,6 +1,6 @@
 {
   "name": "oira666_pi-mcp-adapter",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "license": "MIT",
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/nicobailon/pi-mcp-adapter"
+    "url": "https://github.com/gee666/pi-mcp-adapter"
   },
   "keywords": [
     "pi-package",
@@ -32,7 +32,7 @@
     "extensions": [
       "./index.ts"
     ],
-    "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
+    "video": "https://github.com/gee666/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
   },
   "files": [
     "cli.js",
@@ -47,6 +47,7 @@
     "commands.ts",
     "types.ts",
     "ui-stream-types.ts",
+    "pi-dir.ts",
     "config.ts",
     "server-manager.ts",
     "tool-registrar.ts",
