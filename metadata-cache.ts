@@ -1,7 +1,7 @@
 // metadata-cache.ts - Persistent MCP metadata cache
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { piAgentPath } from "./pi-dir.js";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.js";
@@ -11,7 +11,7 @@ import { extractToolUiStreamMode } from "./utils.js";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const CACHE_PATH = join(homedir(), ".pi", "agent", "mcp-cache.json");
+const CACHE_PATH = piAgentPath("agent", "mcp-cache.json");
 
 export interface CachedTool {
   name: string;

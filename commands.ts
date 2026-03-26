@@ -3,6 +3,7 @@ import type { McpExtensionState } from "./state.js";
 import type { McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult } from "./types.js";
 import { getServerProvenance, writeDirectToolsConfig } from "./config.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
+import { piAgentPath } from "./pi-dir.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { getStoredTokens } from "./oauth-handler.js";
 import { buildToolMetadata } from "./tool-metadata.js";
@@ -143,7 +144,7 @@ export async function authenticateServer(
     return;
   }
 
-  const tokenPath = `~/.pi/agent/mcp-oauth/${serverName}/tokens.json`;
+  const tokenPath = piAgentPath("agent", "mcp-oauth", serverName, "tokens.json");
 
   ctx.ui.notify(
     `OAuth setup for "${serverName}":\n\n` +

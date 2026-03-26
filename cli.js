@@ -7,9 +7,10 @@ import os from "node:os";
 import { execSync } from "node:child_process";
 
 const REPO_URL = "https://raw.githubusercontent.com/nicobailon/pi-mcp-adapter/main";
-const EXT_DIR = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-mcp-adapter");
-const SETTINGS_FILE = path.join(os.homedir(), ".pi", "agent", "settings.json");
-const EXT_PATH = "~/.pi/agent/extensions/pi-mcp-adapter/index.ts";
+const PI_DIR = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi");
+const EXT_DIR = path.join(PI_DIR, "agent", "extensions", "pi-mcp-adapter");
+const SETTINGS_FILE = path.join(PI_DIR, "agent", "settings.json");
+const EXT_PATH = path.join(PI_DIR, "agent", "extensions", "pi-mcp-adapter", "index.ts");
 
 const FILES = [
   "index.ts",
@@ -98,7 +99,7 @@ async function main() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
 
   console.log("\nInstallation complete!");
-  console.log("\nCreate ~/.pi/agent/mcp.json to configure MCP servers.");
+  console.log(`\nCreate ${path.join(PI_DIR, "agent", "mcp.json")} to configure MCP servers.`);
   console.log("Restart pi to load the extension.");
 }
 

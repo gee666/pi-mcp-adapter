@@ -1,10 +1,10 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
+import { piAgentPath } from "./pi-dir.js";
 
-const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
+const DEFAULT_CONFIG_PATH = piAgentPath("agent", "mcp.json");
 const PROJECT_CONFIG_NAME = ".pi/mcp.json";
 
 // Import source paths for other tools

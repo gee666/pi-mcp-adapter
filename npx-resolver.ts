@@ -1,12 +1,12 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, dirname, extname, resolve, sep } from "node:path";
+import { piAgentPath } from "./pi-dir.js";
 import { spawn, spawnSync } from "node:child_process";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_PATH = join(homedir(), ".pi", "agent", "mcp-npx-cache.json");
+const CACHE_PATH = piAgentPath("agent", "mcp-npx-cache.json");
 
 interface NpxCacheEntry {
   resolvedBin: string;
