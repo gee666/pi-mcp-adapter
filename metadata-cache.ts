@@ -11,7 +11,7 @@ import { extractToolUiStreamMode } from "./utils.js";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const CACHE_PATH = piAgentPath("agent", "mcp-cache.json");
+const CACHE_PATH = piAgentPath("mcp-cache.json");
 
 export interface CachedTool {
   name: string;

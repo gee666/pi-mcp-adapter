@@ -1,18 +1,18 @@
-// pi-dir.ts - Resolve the pi agent base directory
-// Respects the PI_CODING_AGENT_DIR environment variable when set,
-// otherwise falls back to ~/.pi (the default pi installation directory).
+// pi-dir.ts - Resolve the pi agent directory
+// Pi sets PI_CODING_AGENT_DIR to the agent directory itself (e.g. ~/.pi/agent).
+// When the variable is not set we fall back to ~/.pi/agent.
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Returns the pi agent base directory.
+ * Returns the pi agent directory.
  *
  * Resolution order:
- *   1. $PI_CODING_AGENT_DIR  (if set and non-empty)
- *   2. ~/.pi                 (default)
+ *   1. $PI_CODING_AGENT_DIR  — Pi sets this to the agent dir directly (e.g. ~/.pi/agent)
+ *   2. ~/.pi/agent           — default when the variable is absent
  */
 export function getPiAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi");
+  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 }
 
 /**

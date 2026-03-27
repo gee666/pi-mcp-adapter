@@ -6,7 +6,7 @@ import { piAgentPath } from "./pi-dir.js";
 
 // Token storage path for a server
 function getTokensPath(serverName: string): string {
-  return piAgentPath("agent", "mcp-oauth", serverName, "tokens.json");
+  return piAgentPath("mcp-oauth", serverName, "tokens.json");
 }
 
 /**

@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_PATH = piAgentPath("agent", "mcp-npx-cache.json");
+const CACHE_PATH = piAgentPath("mcp-npx-cache.json");
 
 interface NpxCacheEntry {
   resolvedBin: string;

@@ -237,20 +237,20 @@ Restart pi, then ask the agent to show a chart — it calls `show_chart` and ope
 
 ### Custom Pi Directory
 
-By default the adapter looks for its config and cache files under `~/.pi/agent/`. If you run Pi with a custom home directory, set the `PI_CODING_AGENT_DIR` environment variable and the adapter will use that path instead:
+By default the adapter looks for its config and cache files under `~/.pi/agent/`. If Pi is configured with a custom agent directory, set `PI_CODING_AGENT_DIR` to that path and the adapter will use it directly instead of `~/.pi/agent`:
 
 ```bash
-export PI_CODING_AGENT_DIR=/path/to/my/pi
+export PI_CODING_AGENT_DIR=/path/to/my/pi/agent
 ```
 
 Affected paths:
 
-| File | Default location |
-|------|-----------------|
-| MCP config | `$PI_CODING_AGENT_DIR/agent/mcp.json` |
-| Metadata cache | `$PI_CODING_AGENT_DIR/agent/mcp-cache.json` |
-| npx binary cache | `$PI_CODING_AGENT_DIR/agent/mcp-npx-cache.json` |
-| OAuth tokens | `$PI_CODING_AGENT_DIR/agent/mcp-oauth/<server>/tokens.json` |
+| File | Location |
+|------|----------|
+| MCP config | `$PI_CODING_AGENT_DIR/mcp.json` |
+| Metadata cache | `$PI_CODING_AGENT_DIR/mcp-cache.json` |
+| npx binary cache | `$PI_CODING_AGENT_DIR/mcp-npx-cache.json` |
+| OAuth tokens | `$PI_CODING_AGENT_DIR/mcp-oauth/<server>/tokens.json` |
 
 ### Import Existing Configs
 

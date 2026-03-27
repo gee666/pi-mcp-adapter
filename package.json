@@ -1,6 +1,6 @@
 {
   "name": "oira666_pi-mcp-adapter",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "license": "MIT",

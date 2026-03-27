@@ -144,7 +144,7 @@ export async function authenticateServer(
     return;
   }
 
-  const tokenPath = piAgentPath("agent", "mcp-oauth", serverName, "tokens.json");
+  const tokenPath = piAgentPath("mcp-oauth", serverName, "tokens.json");
 
   ctx.ui.notify(
     `OAuth setup for "${serverName}":\n\n` +
