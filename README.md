@@ -19,16 +19,14 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 ## Install
 
 ```bash
-pi install npm:pi-mcp-adapter
+pi install npm:oira666_pi-mcp-adapter@latest
 ```
 
 Restart Pi after installation.
 
 ## Quick Start
 
-Create `<agent-dir>/mcp.json`.
-Default: `~/.pi/agent/mcp.json`.
-If `PI_CODING_AGENT_DIR` is set, use `<PI_CODING_AGENT_DIR>/mcp.json` instead.
+Create `~/.pi/agent/mcp.json` (or `$PI_CODING_AGENT_DIR/agent/mcp.json` if you have that env variable set):
 
 ```json
 {
@@ -172,7 +170,7 @@ Per-server `directTools` overrides the global setting. The example above registe
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`.
 
-Direct tools register from the metadata cache in the Pi agent dir (`mcp-cache.json` under `~/.pi/agent` by default; if `PI_CODING_AGENT_DIR` is set, use that directory instead), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. Restart Pi and they'll be available. To force it: `/mcp reconnect <server>` then restart.
+Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`, or `$PI_CODING_AGENT_DIR/agent/mcp-cache.json` if set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only and the cache populates in the background. Restart Pi and they'll be available. To force it: `/mcp reconnect <server>` then restart.
 
 **Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers, initiate OAuth, and toggle tools between direct and proxy — all from one overlay. Changes are written to your config file; restart Pi to apply.
 
@@ -236,6 +234,23 @@ npm run install-local
 ```
 
 Restart pi, then ask the agent to show a chart — it calls `show_chart` and opens the UI in Glimpse (macOS) or the browser. Use `npm run uninstall-local` to remove the MCP entry.
+
+### Custom Pi Directory
+
+By default the adapter looks for its config and cache files under `~/.pi/agent/`. If Pi is configured with a custom agent directory, set `PI_CODING_AGENT_DIR` to that path and the adapter will use it directly instead of `~/.pi/agent`:
+
+```bash
+export PI_CODING_AGENT_DIR=/path/to/my/pi/agent
+```
+
+Affected paths:
+
+| File | Location |
+|------|----------|
+| MCP config | `$PI_CODING_AGENT_DIR/mcp.json` |
+| Metadata cache | `$PI_CODING_AGENT_DIR/mcp-cache.json` |
+| npx binary cache | `$PI_CODING_AGENT_DIR/mcp-npx-cache.json` |
+| OAuth tokens | `$PI_CODING_AGENT_DIR/mcp-oauth/<server>/tokens.json` |
 
 ### Import Existing Configs
 
