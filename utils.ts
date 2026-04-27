@@ -1,22 +1,32 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { platform } from "node:os";
+import type { McpConfig } from "./types.js";
 
-export async function openUrl(pi: ExtensionAPI, url: string, browser?: string): Promise<void> {
+async function execOpen(pi: ExtensionAPI, target: string, browser?: string) {
   const os = platform();
-  let result;
 
   if (os === "darwin") {
-    result = browser ? await pi.exec("open", ["-a", browser, url]) : await pi.exec("open", [url]);
-  } else if (os === "win32") {
-    result = browser
-      ? await pi.exec("cmd", ["/c", "start", "", browser, url])
-      : await pi.exec("cmd", ["/c", "start", "", url]);
-  } else {
-    result = browser ? await pi.exec(browser, [url]) : await pi.exec("xdg-open", [url]);
+    return browser ? pi.exec("open", ["-a", browser, target]) : pi.exec("open", [target]);
   }
+  if (os === "win32") {
+    return browser
+      ? pi.exec("cmd", ["/c", "start", "", browser, target])
+      : pi.exec("cmd", ["/c", "start", "", target]);
+  }
+  return browser ? pi.exec(browser, [target]) : pi.exec("xdg-open", [target]);
+}
 
+export async function openUrl(pi: ExtensionAPI, url: string, browser?: string): Promise<void> {
+  const result = await execOpen(pi, url, browser);
   if (result.code !== 0) {
     throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
+  }
+}
+
+export async function openPath(pi: ExtensionAPI, targetPath: string): Promise<void> {
+  const result = await execOpen(pi, targetPath);
+  if (result.code !== 0) {
+    throw new Error(result.stderr || `Failed to open path (exit code ${result.code})`);
   }
 }
 
@@ -59,6 +69,15 @@ export function truncateAtWord(text: string, target: number): string {
   }
 
   return truncated + "...";
+}
+
+export function formatAuthRequiredMessage(
+  config: Pick<McpConfig, "settings">,
+  serverName: string,
+  defaultMessage: string,
+): string {
+  const template = config.settings?.authRequiredMessage;
+  return template ? template.replaceAll("${server}", serverName) : defaultMessage;
 }
 
 /**

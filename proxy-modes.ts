@@ -6,9 +6,68 @@ import { lazyConnect, updateServerMetadata, updateMetadataCache, getFailureAgeSe
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
-import { truncateAtWord } from "./utils.js";
+import { formatAuthRequiredMessage, truncateAtWord } from "./utils.js";
+import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+
+type AutoAuthResult =
+  | { status: "skipped" }
+  | { status: "success" }
+  | { status: "failed"; message: string };
+
+function getAuthRequiredMessage(
+  state: McpExtensionState,
+  serverName: string,
+  defaultMessage = `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.`,
+): string {
+  return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
+}
+
+function getAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
+  const customGuidance = state.config.settings?.authRequiredMessage;
+  if (customGuidance) {
+    return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
+  }
+  return `OAuth authentication failed for "${serverName}": ${message}. Run /mcp-auth ${serverName} first.`;
+}
+
+async function attemptAutoAuth(
+  state: McpExtensionState,
+  serverName: string,
+): Promise<AutoAuthResult> {
+  if (state.config.settings?.autoAuth !== true) {
+    return { status: "skipped" };
+  }
+
+  const definition = state.config.mcpServers[serverName];
+  if (!definition || !supportsOAuth(definition) || !definition.url) {
+    return { status: "skipped" };
+  }
+
+  const grantType = definition.oauth?.grantType ?? "authorization_code";
+  if (!state.ui && grantType !== "client_credentials") {
+    return {
+      status: "failed",
+      message: getAuthRequiredMessage(
+        state,
+        serverName,
+        `Server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} in an interactive session.`,
+      ),
+    };
+  }
+
+  try {
+    await authenticate(serverName, definition.url, definition);
+    return { status: "success" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "failed",
+      message: getAuthFailedMessage(state, serverName, message),
+    };
+  }
+}
 
 export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
   const sessions = state.completedUiSessions;
@@ -99,6 +158,8 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     let status = "not connected";
     if (connection?.status === "connected") {
       status = "connected";
+    } else if (connection?.status === "needs-auth") {
+      status = "needs-auth";
     } else if (failedAgo !== null) {
       status = "failed";
     } else if (metadata !== undefined) {
@@ -115,6 +176,10 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   for (const server of servers) {
     if (server.status === "connected") {
       text += `✓ ${server.name} (${server.toolCount} tools)\n`;
+      continue;
+    }
+    if (server.status === "needs-auth") {
+      text += `⚠ ${server.name} (needs auth)\n`;
       continue;
     }
     if (server.status === "cached") {
@@ -185,7 +250,6 @@ export function executeSearch(
   regex?: boolean,
   server?: string,
   includeSchemas?: boolean,
-  getPiTools?: () => ToolInfo[]
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
 
@@ -213,21 +277,6 @@ export function executeSearch(
     };
   }
 
-  const piMatches: Array<{ name: string; description: string }> = [];
-  if (!server && getPiTools) {
-    const piTools = getPiTools();
-    for (const tool of piTools) {
-      if (tool.name === "mcp") continue;
-
-      if (pattern.test(tool.name) || pattern.test(tool.description ?? "")) {
-        piMatches.push({
-          name: tool.name,
-          description: tool.description ?? "",
-        });
-      }
-    }
-  }
-
   for (const [serverName, metadata] of state.toolMetadata.entries()) {
     if (server && serverName !== server) continue;
     for (const tool of metadata) {
@@ -240,7 +289,7 @@ export function executeSearch(
     }
   }
 
-  const totalCount = piMatches.length + matches.length;
+  const totalCount = matches.length;
 
   if (totalCount === 0) {
     const msg = server
@@ -253,21 +302,6 @@ export function executeSearch(
   }
 
   let text = `Found ${totalCount} tool${totalCount === 1 ? "" : "s"} matching "${query}":\n\n`;
-
-  for (const match of piMatches) {
-    if (showSchemas) {
-      text += `[pi tool] ${match.name}\n`;
-      text += `  ${match.description || "(no description)"}\n`;
-      text += `  No parameters (call directly).\n`;
-      text += "\n";
-    } else {
-      text += `[pi tool] ${match.name}`;
-      if (match.description) {
-        text += ` - ${truncateAtWord(match.description, 50)}`;
-      }
-      text += "\n";
-    }
-  }
 
   for (const match of matches) {
     if (showSchemas) {
@@ -292,10 +326,7 @@ export function executeSearch(
     content: [{ type: "text" as const, text: text.trim() }],
     details: {
       mode: "search",
-      matches: [
-        ...piMatches.map(m => ({ server: "pi", tool: m.name })),
-        ...matches.map(m => ({ server: m.server, tool: m.tool.name })),
-      ],
+      matches: matches.map(m => ({ server: m.server, tool: m.tool.name })),
       count: totalCount,
       query,
     },
@@ -370,7 +401,27 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     if (state.ui) {
       state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
     }
-    const connection = await state.manager.connect(serverName, definition);
+    let connection = await state.manager.connect(serverName, definition);
+    if (connection.status === "needs-auth") {
+      const autoAuth = await attemptAutoAuth(state, serverName);
+      if (autoAuth.status === "failed") {
+        return {
+          content: [{ type: "text" as const, text: autoAuth.message }],
+          details: { mode: "connect", error: "auth_required", server: serverName, message: autoAuth.message },
+        };
+      }
+      if (autoAuth.status === "success") {
+        await state.manager.close(serverName);
+        connection = await state.manager.connect(serverName, definition);
+      }
+      if (connection.status === "needs-auth") {
+        const message = getAuthRequiredMessage(state, serverName);
+        return {
+          content: [{ type: "text" as const, text: message }],
+          details: { mode: "connect", error: "auth_required", server: serverName, message },
+        };
+      }
+    }
     const prefix = state.config.settings?.toolPrefix ?? "server";
     const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix);
     state.toolMetadata.set(serverName, metadata);
@@ -394,9 +445,11 @@ export async function executeCall(
   toolName: string,
   args?: Record<string, unknown>,
   serverOverride?: string,
+  getPiTools?: () => ToolInfo[],
 ): Promise<ProxyToolResult> {
   let serverName: string | undefined = serverOverride;
   let toolMeta: ToolMetadata | undefined;
+  let autoAuthAttempted = false;
   const prefixMode = state.config.settings?.toolPrefix ?? "server";
 
   if (serverName && !state.config.mcpServers[serverName]) {
@@ -424,12 +477,50 @@ export async function executeCall(
     if (connected) {
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
     } else {
-      const failedAgo = getFailureAgeSeconds(state, serverName);
-      if (failedAgo !== null) {
-        return {
-          content: [{ type: "text" as const, text: `Server "${serverName}" not available (last failed ${failedAgo}s ago)` }],
-          details: { mode: "call", error: "server_backoff", server: serverName },
-        };
+      const needsAuthConnection = state.manager.getConnection(serverName);
+      if (needsAuthConnection?.status === "needs-auth") {
+        if (!autoAuthAttempted) {
+          autoAuthAttempted = true;
+          const autoAuth = await attemptAutoAuth(state, serverName);
+          if (autoAuth.status === "failed") {
+            return {
+              content: [{ type: "text" as const, text: autoAuth.message }],
+              details: { mode: "call", error: "auth_required", server: serverName, message: autoAuth.message },
+            };
+          }
+          if (autoAuth.status === "success") {
+            await state.manager.close(serverName);
+            state.failureTracker.delete(serverName);
+            const connectedAfterAuth = await lazyConnect(state, serverName);
+            if (connectedAfterAuth) {
+              toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
+              if (!toolMeta) {
+                return {
+                  content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect.` }],
+                  details: { mode: "call", error: "tool_not_found_after_reconnect", requestedTool: toolName },
+                };
+              }
+            }
+          }
+        }
+
+        if (!toolMeta && state.manager.getConnection(serverName)?.status === "needs-auth") {
+          const message = getAuthRequiredMessage(state, serverName);
+          return {
+            content: [{ type: "text" as const, text: message }],
+            details: { mode: "call", error: "auth_required", server: serverName, message },
+          };
+        }
+      }
+
+      if (!toolMeta) {
+        const failedAgo = getFailureAgeSeconds(state, serverName);
+        if (failedAgo !== null) {
+          return {
+            content: [{ type: "text" as const, text: `Server "${serverName}" not available (last failed ${failedAgo}s ago)` }],
+            details: { mode: "call", error: "server_backoff", server: serverName },
+          };
+        }
       }
     }
   }
@@ -443,9 +534,27 @@ export async function executeCall(
       .sort((a, b) => b.prefix.length - a.prefix.length);
 
     for (const { name: configuredServer } of candidates) {
+      const existingConnection = state.manager.getConnection(configuredServer);
       const failedAgo = getFailureAgeSeconds(state, configuredServer);
-      if (failedAgo !== null) continue;
-      const connected = await lazyConnect(state, configuredServer);
+      if (failedAgo !== null && existingConnection?.status !== "needs-auth") continue;
+
+      let connected = await lazyConnect(state, configuredServer);
+      if (!connected && state.manager.getConnection(configuredServer)?.status === "needs-auth" && !autoAuthAttempted) {
+        autoAuthAttempted = true;
+        const autoAuth = await attemptAutoAuth(state, configuredServer);
+        if (autoAuth.status === "failed") {
+          return {
+            content: [{ type: "text" as const, text: autoAuth.message }],
+            details: { mode: "call", error: "auth_required", server: configuredServer, message: autoAuth.message },
+          };
+        }
+        if (autoAuth.status === "success") {
+          await state.manager.close(configuredServer);
+          state.failureTracker.delete(configuredServer);
+          connected = await lazyConnect(state, configuredServer);
+        }
+      }
+
       if (!connected) continue;
       if (!prefixMatchedServer) prefixMatchedServer = configuredServer;
       toolMeta = findToolByName(state.toolMetadata.get(configuredServer), toolName);
@@ -457,6 +566,16 @@ export async function executeCall(
   }
 
   if (!serverName || !toolMeta) {
+    const nativeTool = !serverOverride
+      ? getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp")
+      : undefined;
+    if (nativeTool) {
+      return {
+        content: [{ type: "text" as const, text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ tool: "${toolName}" }).` }],
+        details: { mode: "call", error: "native_tool", requestedTool: toolName },
+      };
+    }
+
     const hintServer = serverName ?? prefixMatchedServer;
     const available = hintServer ? getToolNames(state, hintServer) : [];
     let msg = `Tool "${toolName}" not found.`;
@@ -472,6 +591,31 @@ export async function executeCall(
   }
 
   let connection = state.manager.getConnection(serverName);
+  if (connection?.status === "needs-auth") {
+    if (!autoAuthAttempted) {
+      autoAuthAttempted = true;
+      const autoAuth = await attemptAutoAuth(state, serverName);
+      if (autoAuth.status === "failed") {
+        return {
+          content: [{ type: "text" as const, text: autoAuth.message }],
+          details: { mode: "call", error: "auth_required", server: serverName, message: autoAuth.message },
+        };
+      }
+      if (autoAuth.status === "success") {
+        await state.manager.close(serverName);
+        state.failureTracker.delete(serverName);
+        connection = state.manager.getConnection(serverName);
+      }
+    }
+
+    if (connection?.status === "needs-auth") {
+      const message = getAuthRequiredMessage(state, serverName);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { mode: "call", error: "auth_required", server: serverName, message },
+      };
+    }
+  }
   if (!connection || connection.status !== "connected") {
     const failedAgo = getFailureAgeSeconds(state, serverName);
     if (failedAgo !== null) {
@@ -494,6 +638,30 @@ export async function executeCall(
         state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
       }
       connection = await state.manager.connect(serverName, definition);
+      if (connection.status === "needs-auth") {
+        if (!autoAuthAttempted) {
+          autoAuthAttempted = true;
+          const autoAuth = await attemptAutoAuth(state, serverName);
+          if (autoAuth.status === "failed") {
+            return {
+              content: [{ type: "text" as const, text: autoAuth.message }],
+              details: { mode: "call", error: "auth_required", server: serverName, message: autoAuth.message },
+            };
+          }
+          if (autoAuth.status === "success") {
+            await state.manager.close(serverName);
+            connection = await state.manager.connect(serverName, definition);
+          }
+        }
+
+        if (connection.status === "needs-auth") {
+          const message = getAuthRequiredMessage(state, serverName);
+          return {
+            content: [{ type: "text" as const, text: message }],
+            details: { mode: "call", error: "auth_required", server: serverName, message },
+          };
+        }
+      }
       state.failureTracker.delete(serverName);
       updateServerMetadata(state, serverName);
       updateMetadataCache(state, serverName);

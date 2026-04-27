@@ -21,6 +21,7 @@ import { buildToolMetadata, totalToolCount } from "./tool-metadata.js";
 import { UiResourceHandler } from "./ui-resource-handler.js";
 import { openUrl, parallelLimit } from "./utils.js";
 import { logger } from "./logger.js";
+import { getMissingConfiguredDirectToolServers } from "./direct-tools.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
@@ -32,6 +33,16 @@ export async function initializeMcp(
   const config = loadMcpConfig(configPath);
 
   const manager = new McpServerManager();
+  const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
+  if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
+    manager.setSamplingConfig({
+      autoApprove: samplingAutoApprove,
+      ui: ctx.hasUI ? ctx.ui : undefined,
+      modelRegistry: ctx.modelRegistry,
+      getCurrentModel: () => ctx.model,
+      getSignal: () => ctx.signal,
+    });
+  }
   const lifecycle = new McpLifecycleManager(manager);
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const failureTracker = new Map<string, number>();
@@ -89,7 +100,7 @@ export async function initializeMcp(
     }
 
     if (cache?.servers?.[name] && isServerCacheValid(cache.servers[name], definition)) {
-      const metadata = reconstructToolMetadata(name, cache.servers[name], prefix, definition.exposeResources);
+      const metadata = reconstructToolMetadata(name, cache.servers[name], prefix, definition);
       toolMetadata.set(name, metadata);
     }
   }
@@ -108,6 +119,9 @@ export async function initializeMcp(
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
     try {
       const connection = await manager.connect(name, definition);
+      if (connection.status === "needs-auth") {
+        return { name, definition, connection: null, error: `OAuth authentication required. Run /mcp-auth ${name}.` };
+      }
       return { name, definition, connection, error: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -148,18 +162,8 @@ export async function initializeMcp(
 
   const envDirect = process.env.MCP_DIRECT_TOOLS;
   if (envDirect !== "__none__") {
-    const missingCacheServers: string[] = [];
     const currentCache = loadMetadataCache();
-    for (const [name, definition] of serverEntries) {
-      const hasDirect = definition.directTools !== undefined
-        ? !!definition.directTools
-        : !!config.settings?.directTools;
-      if (!hasDirect) continue;
-      const entry = currentCache?.servers?.[name];
-      if (!entry || !isServerCacheValid(entry, definition)) {
-        missingCacheServers.push(name);
-      }
-    }
+    const missingCacheServers = getMissingConfiguredDirectToolServers(config, currentCache);
 
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
@@ -169,11 +173,16 @@ export async function initializeMcp(
           const definition = config.mcpServers[name];
           try {
             const connection = await manager.connect(name, definition);
+            if (connection.status === "needs-auth") {
+              return { name, ok: false };
+            }
             const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
             toolMetadata.set(name, metadata);
             updateMetadataCache(state, name);
             return { name, ok: true };
-          } catch {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.debug(`MCP: direct-tools bootstrap failed for ${name}: ${message}`);
             return { name, ok: false };
           }
         },
@@ -262,7 +271,7 @@ export function updateStatusBar(state: McpExtensionState): void {
   if (!ui) return;
   const total = Object.keys(state.config.mcpServers).length;
   if (total === 0) {
-    ui.setStatus("mcp", "");
+    ui.setStatus("mcp", undefined);
     return;
   }
   const connectedCount = state.manager.getAllConnections().size;
@@ -279,6 +288,9 @@ export function getFailureAgeSeconds(state: McpExtensionState, serverName: strin
 
 export async function lazyConnect(state: McpExtensionState, serverName: string): Promise<boolean> {
   const connection = state.manager.getConnection(serverName);
+  if (connection?.status === "needs-auth") {
+    return false;
+  }
   if (connection?.status === "connected") {
     updateServerMetadata(state, serverName);
     return true;
@@ -294,14 +306,19 @@ export async function lazyConnect(state: McpExtensionState, serverName: string):
     if (state.ui) {
       state.ui.setStatus("mcp", `MCP: connecting to ${serverName}...`);
     }
-    await state.manager.connect(serverName, definition);
+    const newConnection = await state.manager.connect(serverName, definition);
+    if (newConnection.status === "needs-auth") {
+      return false;
+    }
     state.failureTracker.delete(serverName);
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
     updateStatusBar(state);
     return true;
-  } catch {
+  } catch (error) {
     state.failureTracker.set(serverName, Date.now());
+    const message = error instanceof Error ? error.message : String(error);
+    logger.debug(`MCP: lazy connect failed for ${serverName}: ${message}`);
     updateStatusBar(state);
     return false;
   }

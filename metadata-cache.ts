@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.js";
-import { formatToolName } from "./types.js";
+import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import { extractToolUiStreamMode } from "./utils.js";
 
@@ -96,6 +96,7 @@ export function computeServerHash(definition: ServerEntry): string {
     bearerToken: definition.bearerToken,
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
+    excludeTools: definition.excludeTools,
   };
   const normalized = stableStringify(identity);
   return createHash("sha256").update(normalized).digest("hex");
@@ -116,12 +117,16 @@ export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
   prefix: "server" | "none" | "short",
-  exposeResources?: boolean
+  definition: Pick<ServerEntry, "exposeResources" | "excludeTools">
 ): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
 
   for (const tool of entry.tools ?? []) {
     if (!tool?.name) continue;
+    if (isToolExcluded(tool.name, serverName, prefix, definition.excludeTools)) {
+      continue;
+    }
+
     metadata.push({
       name: formatToolName(tool.name, serverName, prefix),
       originalName: tool.name,
@@ -132,10 +137,14 @@ export function reconstructToolMetadata(
     });
   }
 
-  if (exposeResources !== false) {
+  if (definition.exposeResources !== false) {
     for (const resource of entry.resources ?? []) {
       if (!resource?.name || !resource?.uri) continue;
       const baseName = `get_${resourceNameToToolName(resource.name)}`;
+      if (isToolExcluded(baseName, serverName, prefix, definition.excludeTools)) {
+        continue;
+      }
+
       metadata.push({
         name: formatToolName(baseName, serverName, prefix),
         originalName: baseName,

@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-04-24
+
+### Fixed
+- Changed OAuth browser callbacks to `http://localhost:<port>/callback` for pre-registered clients such as Slack MCP. Thanks @shenal for PR #53.
+
+## [2.5.0] - 2026-04-24
+
+### Added
+- Added MCP `sampling/createMessage` support with conservative human approval by default and opt-in `settings.samplingAutoApprove` for non-interactive flows.
+- Added configured Vitest coverage for OAuth provider authorization fallback behavior.
+- Added `test:oauth-provider` for running the root OAuth provider node test with the required TypeScript loader.
+
+### Fixed
+- Applied `settings.authRequiredMessage` to proxy and direct-tool auth-required paths, including non-UI `autoAuth` failures.
+- Fixed `/mcp-auth <server>` reporting success for expired stored OAuth tokens without forcing the SDK refresh/re-auth flow.
+- Kept `mcp` search focused on MCP tools and added a direct-call hint when native Pi tools are accidentally routed through the proxy.
+
+## [2.4.2] - 2026-04-22
+
+### Fixed
+- Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Pi's current extension runtime contract.
+
+### Changed
+- Replaced the legacy `@sinclair/typebox` runtime dependency with `typebox`.
+
+## [2.4.1] - 2026-04-22
+
+### Added
+- Added standard-MCP-first config discovery: `~/.config/mcp/mcp.json` and project `.mcp.json` now load automatically, with Pi-owned files preserved as override layers.
+- Added `pi-mcp-adapter init` as a native post-install helper that detects host-specific MCP configs and scaffolds Pi compatibility imports without using the old raw GitHub downloader flow.
+- Added first-run onboarding inside the extension: `/mcp` now shows shared-config hints or actionable empty states, and `/mcp setup` opens a guided setup flow for compatibility imports, minimal `.mcp.json` scaffolding, detected config paths, RepoPrompt quick-add, and exact before/after write previews.
+- Added automatic Pi-core reload after setup or direct-tool config changes, using the same flow as `/reload` so freshly configured direct tools can appear without a manual restart.
+- Added a dedicated Pi-owned onboarding state file so shared-config hints behave as one-time guidance instead of repeating every session.
+
+### Changed
+- Updated config precedence to prefer shared MCP files first, then Pi overrides, with `.pi/mcp.json` acting as the final Pi-specific project override.
+- Updated Claude Code compatibility probing to prefer modern Claude MCP config locations before legacy paths.
+- Updated project scaffolding so generated `.mcp.json` files are safe minimal shells instead of fake placeholder servers that fail on first reload.
+- Updated the setup panel and README for clearer first-run guidance, improved spacing, and a more digestible shared-MCP-first setup story.
+
+## [2.4.0] - 2026-04-13
+
+### Added
+- `settings.disableProxyTool` to hide the `mcp` proxy tool once configured direct tools are fully available from cache. Thanks @tanavamsikrishna for PR #41.
+- Per-server `excludeTools` to hide specific MCP tools/resources by original or prefixed name across direct tools, proxy discovery, and the `/mcp` panel. Thanks @ahmadaccino for issue #36.
+- `settings.autoAuth` to optionally trigger OAuth automatically from proxy/direct tool usage, then rerun the original blocked connect/tool operation once after authentication succeeds. Thanks @unimonkiez for issue #34.
+
+### Fixed
+- Regenerated `package-lock.json` so the root lockfile metadata matches `package.json` again, including the declared `open`, `@types/bun`, `@types/open`, and `tsx` entries.
+- Kept the `mcp` proxy tool available as a first-session fallback when configured direct tools are still missing cache metadata, avoiding no-tool startup gaps.
+
+## [2.3.5] - 2026-04-13
+
+### Fixed
+- Session lifecycle now always tears down OAuth callback state on restart and shutdown, preventing callback-server leaks across session transitions.
+- OAuth callback server now calls `unref()` after successful bind so it no longer keeps sub-agent processes alive by itself.
+- Strict OAuth port mode now rebinds to the configured callback port when safe, while refusing to switch ports when authorizations are still pending.
+- Added focused lifecycle/callback-server regression coverage for teardown, `unref()`, strict rebinding, and pending-auth guardrails.
+- Thanks @blai for the investigation and PR #43 that surfaced the sub-agent hang/root lifecycle issues.
+
+## [2.3.4] - 2026-04-12
+
+### Fixed
+- OAuth callback handling now allows dynamic-registration flows to fall back to a free local port when the preferred callback port is busy, while keeping pre-registered clients on their exact configured redirect port.
+- Documented the new callback-port behavior and added focused auth-flow regression coverage.
+
+## [2.3.3] - 2026-04-12
+
+### Fixed
+- Remove the blank footer status line when no MCP servers are configured by clearing the MCP status entry instead of setting it to an empty string. Thanks @HazAT for PR #27.
+
+## [2.3.2] - 2026-04-11
+
+### Added
+- Optional `oauth.grantType: "client_credentials"` for non-interactive machine-to-machine OAuth on HTTP MCP servers.
+
+### Fixed
+- `/mcp-auth <server>` now handles `client_credentials` without browser/callback flow.
+- MCP panel status no longer marks `client_credentials` servers as auth-blocked solely because no stored user tokens exist yet.
+- OAuth auth flow now closes temporary transports consistently on success, refresh, and auth removal paths.
+- Init paths now preserve debug-level context for previously silent direct-tool bootstrap and lazy-connect failures.
+
+## [2.3.1] - 2026-04-11
+
+### Fixed
+- Removed `/mcp-auth-callback`. OAuth auth now hard-cuts to `/mcp-auth <server>` only.
+
+## [2.3.0] - 2026-04-11
+
+### Added
+- OAuth callback server initialization on session start and a deprecated `/mcp-auth-callback` command that now points users to `/mcp-auth <server>`.
+
+### Fixed
+- OAuth `needs-auth` handling across `/mcp` status/panel, `mcp({ connect })`, `mcp({ tool })`, reconnect flow, lazy/direct tool execution, and startup bootstrap.
+- OAuth callback cleanup now cancels by stored OAuth state and closes pending transports on failure/cancel paths.
+- Callback server now fails fast when the OAuth callback port is occupied by another process.
+- Package manifest test now ignores root `*.test.ts` files.
+
+## [2.2.2] - 2026-04-03
+
+### Fixed
+- Session lifecycle teardown now handles repeated `session_start` transitions safely and prevents stale async init results from replacing newer state.
+- Shutdown now still runs `gracefulShutdown()` even if metadata cache flushing throws, avoiding leaked MCP processes.
+- Proxy/direct tool init error paths now preserve and surface underlying error messages instead of returning generic failures.
+- Invalid `mcp` tool `args` now fail by throwing with parse/type context instead of returning non-failing tool payloads.
+- Added focused lifecycle regressions tests for stale init cleanup and init-error visibility.
+
 ## [2.2.1] - 2026-03-23
 
 ### Fixed

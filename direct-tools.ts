@@ -7,10 +7,70 @@ import { isServerCacheValid } from "./metadata-cache.js";
 import { formatSchema } from "./tool-metadata.js";
 import { transformMcpContent } from "./tool-registrar.js";
 import { maybeStartUiSession, type UiSessionRuntime } from "./ui-session.js";
-import { formatToolName } from "./types.js";
+import { formatToolName, isToolExcluded } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
+import { authenticate, supportsOAuth } from "./mcp-auth-flow.js";
+import { formatAuthRequiredMessage } from "./utils.js";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
+
+type DirectAutoAuthResult =
+  | { status: "skipped" }
+  | { status: "success" }
+  | { status: "failed"; message: string };
+
+function getDirectAuthRequiredMessage(
+  state: McpExtensionState,
+  serverName: string,
+  defaultMessage = `MCP server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} first.`,
+): string {
+  return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
+}
+
+function getDirectAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
+  const customGuidance = state.config.settings?.authRequiredMessage;
+  if (customGuidance) {
+    return `OAuth authentication failed for "${serverName}": ${message}. ${getDirectAuthRequiredMessage(state, serverName)}`;
+  }
+  return `OAuth authentication failed for "${serverName}": ${message}. Run /mcp-auth ${serverName} first.`;
+}
+
+async function attemptDirectAutoAuth(
+  state: McpExtensionState,
+  serverName: string,
+): Promise<DirectAutoAuthResult> {
+  if (state.config.settings?.autoAuth !== true) {
+    return { status: "skipped" };
+  }
+
+  const definition = state.config.mcpServers[serverName];
+  if (!definition || !supportsOAuth(definition) || !definition.url) {
+    return { status: "skipped" };
+  }
+
+  const grantType = definition.oauth?.grantType ?? "authorization_code";
+  if (!state.ui && grantType !== "client_credentials") {
+    return {
+      status: "failed",
+      message: getDirectAuthRequiredMessage(
+        state,
+        serverName,
+        `MCP server "${serverName}" requires OAuth authentication. Run /mcp-auth ${serverName} in an interactive session.`,
+      ),
+    };
+  }
+
+  try {
+    await authenticate(serverName, definition.url, definition);
+    return { status: "success" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "failed",
+      message: getDirectAuthFailedMessage(state, serverName, message),
+    };
+  }
+}
 
 export function resolveDirectTools(
   config: McpConfig,
@@ -68,6 +128,7 @@ export function resolveDirectTools(
 
     for (const tool of serverCache.tools ?? []) {
       if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
+      if (isToolExcluded(tool.name, serverName, prefix, definition.excludeTools)) continue;
       const prefixedName = formatToolName(tool.name, serverName, prefix);
       if (BUILTIN_NAMES.has(prefixedName)) {
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
@@ -93,6 +154,7 @@ export function resolveDirectTools(
       for (const resource of serverCache.resources ?? []) {
         const baseName = `get_${resourceNameToToolName(resource.name)}`;
         if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
+        if (isToolExcluded(baseName, serverName, prefix, definition.excludeTools)) continue;
         const prefixedName = formatToolName(baseName, serverName, prefix);
         if (BUILTIN_NAMES.has(prefixedName)) {
           console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
@@ -117,12 +179,36 @@ export function resolveDirectTools(
   return specs;
 }
 
+export function getMissingConfiguredDirectToolServers(
+  config: McpConfig,
+  cache: MetadataCache | null,
+): string[] {
+  const missing: string[] = [];
+  const globalDirect = config.settings?.directTools;
+
+  for (const [serverName, definition] of Object.entries(config.mcpServers)) {
+    const hasDirectTools = definition.directTools !== undefined
+      ? !!definition.directTools
+      : !!globalDirect;
+
+    if (!hasDirectTools) continue;
+
+    const serverCache = cache?.servers?.[serverName];
+    if (!serverCache || !isServerCacheValid(serverCache, definition)) {
+      missing.push(serverName);
+    }
+  }
+
+  return missing;
+}
+
 export function buildProxyDescription(
   config: McpConfig,
   cache: MetadataCache | null,
   directSpecs: DirectToolSpec[],
 ): string {
-  let desc = `MCP gateway - connect to MCP servers and call their tools.\n`;
+  const prefix = config.settings?.toolPrefix ?? "server";
+  let desc = `MCP gateway - connect to MCP servers and call their tools. Non-MCP Pi tools should be called directly, not through mcp.\n`;
 
   const directByServer = new Map<string, number>();
   for (const spec of directSpecs) {
@@ -139,8 +225,15 @@ export function buildProxyDescription(
   for (const serverName of Object.keys(config.mcpServers)) {
     const entry = cache?.servers?.[serverName];
     const definition = config.mcpServers[serverName];
-    const toolCount = entry?.tools?.length ?? 0;
-    const resourceCount = definition?.exposeResources !== false ? (entry?.resources?.length ?? 0) : 0;
+    const toolCount = (entry?.tools ?? []).filter(
+      (tool) => !isToolExcluded(tool.name, serverName, prefix, definition.excludeTools),
+    ).length;
+    const resourceCount = definition?.exposeResources !== false
+      ? (entry?.resources ?? []).filter((resource) => {
+          const baseName = `get_${resourceNameToToolName(resource.name)}`;
+          return !isToolExcluded(baseName, serverName, prefix, definition.excludeTools);
+        }).length
+      : 0;
     const totalItems = toolCount + resourceCount;
     if (totalItems === 0) continue;
     const directCount = directByServer.get(serverName) ?? 0;
@@ -157,7 +250,7 @@ export function buildProxyDescription(
   desc += `\nUsage:\n`;
   desc += `  mcp({ })                              → Show server status\n`;
   desc += `  mcp({ server: "name" })               → List tools from server\n`;
-  desc += `  mcp({ search: "query" })              → Search for tools (MCP + pi, space-separated words OR'd)\n`;
+  desc += `  mcp({ search: "query" })              → Search MCP tools by name/description\n`;
   desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
   desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
   desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
@@ -181,10 +274,11 @@ export function createDirectToolExecutor(
     if (!state && initPromise) {
       try {
         state = await initPromise;
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         return {
-          content: [{ type: "text" as const, text: "MCP initialization failed" }],
-          details: { error: "init_failed" },
+          content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+          details: { error: "init_failed", message },
         };
       }
     }
@@ -195,8 +289,34 @@ export function createDirectToolExecutor(
       };
     }
 
-    const connected = await lazyConnect(state, spec.serverName);
+    let connected = await lazyConnect(state, spec.serverName);
+    let autoAuthAttempted = false;
+
+    if (!connected && state.manager.getConnection(spec.serverName)?.status === "needs-auth") {
+      autoAuthAttempted = true;
+      const autoAuth = await attemptDirectAutoAuth(state, spec.serverName);
+      if (autoAuth.status === "failed") {
+        return {
+          content: [{ type: "text" as const, text: autoAuth.message }],
+          details: { error: "auth_required", server: spec.serverName, message: autoAuth.message },
+        };
+      }
+      if (autoAuth.status === "success") {
+        await state.manager.close(spec.serverName);
+        state.failureTracker.delete(spec.serverName);
+        connected = await lazyConnect(state, spec.serverName);
+      }
+    }
+
     if (!connected) {
+      const authConnection = state.manager.getConnection(spec.serverName);
+      if (authConnection?.status === "needs-auth") {
+        const message = getDirectAuthRequiredMessage(state, spec.serverName);
+        return {
+          content: [{ type: "text" as const, text: message }],
+          details: { error: "auth_required", server: spec.serverName, message, autoAuthAttempted },
+        };
+      }
       const failedAgo = getFailureAgeSeconds(state, spec.serverName);
       return {
         content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],

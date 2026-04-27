@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import type {
   McpTool,
@@ -11,9 +12,11 @@ import type {
   Transport,
 } from "./types.js";
 import { serverStreamResultPatchNotificationSchema } from "./types.js";
-import { getStoredTokens } from "./oauth-handler.js";
 import { resolveNpxBinary } from "./npx-resolver.js";
 import { logger } from "./logger.js";
+import { McpOAuthProvider } from "./mcp-oauth-provider.js";
+import { supportsOAuth } from "./mcp-auth-flow.js";
+import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.js";
 
 interface ServerConnection {
   client: Client;
@@ -23,7 +26,7 @@ interface ServerConnection {
   resources: McpResource[];
   lastUsedAt: number;
   inFlight: number;
-  status: "connected" | "closed";
+  status: "connected" | "closed" | "needs-auth";
 }
 
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
@@ -32,6 +35,11 @@ export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
+  private samplingConfig: ServerSamplingConfig | undefined;
+
+  setSamplingConfig(config: ServerSamplingConfig | undefined): void {
+    this.samplingConfig = config;
+  }
   
   async connect(name: string, definition: ServerDefinition): Promise<ServerConnection> {
     // Dedupe concurrent connection attempts
@@ -62,7 +70,7 @@ export class McpServerManager {
     name: string,
     definition: ServerDefinition
   ): Promise<ServerConnection> {
-    const client = new Client({ name: `pi-mcp-${name}`, version: "1.0.0" });
+    const client = this.createClient(name);
     
     let transport: Transport;
     
@@ -96,7 +104,7 @@ export class McpServerManager {
     try {
       await client.connect(transport);
       this.attachAdapterNotificationHandlers(name, client);
-      
+
       // Discover tools and resources
       const [tools, resources] = await Promise.all([
         this.fetchAllTools(client),
@@ -114,6 +122,24 @@ export class McpServerManager {
         status: "connected",
       };
     } catch (error) {
+      // Check for UnauthorizedError - server requires OAuth
+      if (error instanceof UnauthorizedError && supportsOAuth(definition)) {
+        // Clean up both client and transport before reporting needs-auth.
+        await client.close().catch(() => {});
+        await transport.close().catch(() => {});
+
+        return {
+          client,
+          transport,
+          definition,
+          tools: [],
+          resources: [],
+          lastUsedAt: Date.now(),
+          inFlight: 0,
+          status: "needs-auth",
+        };
+      }
+      
       // Clean up both client and transport on any error
       await client.close().catch(() => {});
       await transport.close().catch(() => {});
@@ -121,11 +147,27 @@ export class McpServerManager {
     }
   }
   
-  private async createHttpTransport(definition: ServerDefinition, serverName?: string): Promise<Transport> {
+  private createClient(serverName: string): Client {
+    const client = new Client(
+      { name: `pi-mcp-${serverName}`, version: "1.0.0" },
+      this.samplingConfig ? { capabilities: { sampling: {} } } : undefined,
+    );
+    if (this.samplingConfig) {
+      registerSamplingHandler(client, { ...this.samplingConfig, serverName });
+    }
+    return client;
+  }
+
+  private async createHttpTransport(
+    definition: ServerDefinition, 
+    serverName: string
+  ): Promise<Transport> {
     const url = new URL(definition.url!);
+    
+    // Build headers first (including any bearer token)
     const headers = resolveHeaders(definition.headers) ?? {};
     
-    // Add bearer token if configured
+    // For bearer auth, add the token to headers BEFORE creating requestInit
     if (definition.auth === "bearer") {
       const token = definition.bearerToken 
         ?? (definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined);
@@ -134,41 +176,58 @@ export class McpServerManager {
       }
     }
     
-    // Handle OAuth auth - use stored tokens
-    if (definition.auth === "oauth") {
-      if (!serverName) {
-        throw new Error("Server name required for OAuth authentication");
-      }
-      const tokens = getStoredTokens(serverName);
-      if (!tokens) {
-        throw new Error(
-          `No OAuth tokens found for "${serverName}". Run /mcp-auth ${serverName} to authenticate.`
-        );
-      }
-      headers["Authorization"] = `Bearer ${tokens.access_token}`;
-    }
-    
+    // Create request init with headers (Authorization now included for bearer auth)
     const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
     
+    // For OAuth servers, create an auth provider
+    let authProvider: McpOAuthProvider | undefined;
+    if (supportsOAuth(definition)) {
+      // Extract OAuth config (handles both object and false cases)
+      const oauthConfig = definition.oauth === false ? {} : {
+        grantType: definition.oauth?.grantType,
+        clientId: definition.oauth?.clientId,
+        clientSecret: definition.oauth?.clientSecret,
+        scope: definition.oauth?.scope,
+      };
+      authProvider = new McpOAuthProvider(
+        serverName,
+        definition.url!,
+        oauthConfig,
+        {
+          onRedirect: async (_authUrl) => {
+            // URL is captured by startAuth, no need to log
+          },
+        }
+      );
+    }
+    
     // Try StreamableHTTP first (modern MCP servers)
-    const streamableTransport = new StreamableHTTPClientTransport(url, { requestInit });
+    const streamableTransport = new StreamableHTTPClientTransport(url, { 
+      requestInit,
+      authProvider,
+    });
     
     try {
       // Create a test client to verify the transport works
-      const testClient = new Client({ name: "pi-mcp-probe", version: "1.0.0" });
+      const testClient = new Client({ name: "pi-mcp-probe", version: "2.1.2" });
       await testClient.connect(streamableTransport);
       await testClient.close().catch(() => {});
       // Close probe transport before creating fresh one
       await streamableTransport.close().catch(() => {});
       
       // StreamableHTTP works - create fresh transport for actual use
-      return new StreamableHTTPClientTransport(url, { requestInit });
-    } catch {
+      return new StreamableHTTPClientTransport(url, { requestInit, authProvider });
+    } catch (error) {
       // StreamableHTTP failed, close and try SSE fallback
       await streamableTransport.close().catch(() => {});
       
+      // If this was an UnauthorizedError, don't try SSE - the server needs auth
+      if (error instanceof UnauthorizedError) {
+        throw error;
+      }
+      
       // SSE is the legacy transport
-      return new SSEClientTransport(url, { requestInit });
+      return new SSEClientTransport(url, { requestInit, authProvider });
     }
   }
   

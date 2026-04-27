@@ -1,4 +1,5 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { isToolExcluded } from "./types.js";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.js";
 import { resourceNameToToolName } from "./resource-tools.js";
 import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.js";
@@ -93,6 +94,8 @@ interface ServerState {
   expanded: boolean;
   source: "user" | "project" | "import";
   importKind?: string;
+  excludeTools?: string[];
+  exposeResources: boolean;
   connectionStatus: ConnectionStatus;
   tools: ToolState[];
   hasCachedData: boolean;
@@ -105,6 +108,8 @@ interface VisibleItem {
 }
 
 class McpPanel {
+  private noticeLines: string[];
+  private prefix: "server" | "none" | "short";
   private servers: ServerState[] = [];
   private cursorIndex = 0;
   private nameQuery = "";
@@ -130,8 +135,11 @@ class McpPanel {
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
     private done: (result: McpPanelResult) => void,
+    noticeLines: string[] = [],
   ) {
     this.tui = tui;
+    this.noticeLines = noticeLines;
+    this.prefix = config.settings?.toolPrefix ?? "server";
 
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {
       const prov = provenance.get(serverName);
@@ -148,6 +156,10 @@ class McpPanel {
       const tools: ToolState[] = [];
       if (serverCache) {
         for (const tool of serverCache.tools ?? []) {
+          if (isToolExcluded(tool.name, serverName, this.prefix, definition.excludeTools)) {
+            continue;
+          }
+
           const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(tool.name));
           tools.push({
             name: tool.name,
@@ -160,6 +172,10 @@ class McpPanel {
         if (definition.exposeResources !== false) {
           for (const resource of serverCache.resources ?? []) {
             const baseName = `get_${resourceNameToToolName(resource.name)}`;
+            if (isToolExcluded(baseName, serverName, this.prefix, definition.excludeTools)) {
+              continue;
+            }
+
             const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
             const ct: CachedTool = { name: baseName, description: resource.description };
             tools.push({
@@ -180,6 +196,8 @@ class McpPanel {
         expanded: false,
         source: prov?.kind ?? "user",
         importKind: prov?.importKind,
+        excludeTools: definition.excludeTools,
+        exposeResources: definition.exposeResources !== false,
         connectionStatus: status,
         tools,
         hasCachedData: !!serverCache,
@@ -385,8 +403,10 @@ class McpPanel {
           server.hasCachedData = true;
         }
         this.tui.requestRender();
-      }).catch(() => {
+      }).catch((error) => {
         server.connectionStatus = "failed";
+        const message = error instanceof Error ? error.message : String(error);
+        this.authNotice = `Reconnect failed for ${server.name}: ${message}`;
         this.tui.requestRender();
       });
       return;
@@ -477,6 +497,10 @@ class McpPanel {
 
     const newTools: ToolState[] = [];
     for (const tool of entry.tools ?? []) {
+      if (isToolExcluded(tool.name, server.name, this.prefix, server.excludeTools)) {
+        continue;
+      }
+
       const prev = existingState.get(tool.name);
       const isDirect = prev !== undefined ? prev : false;
       newTools.push({
@@ -488,18 +512,24 @@ class McpPanel {
       });
     }
 
-    for (const resource of entry.resources ?? []) {
-      const baseName = `get_${resourceNameToToolName(resource.name)}`;
-      const prev = existingState.get(baseName);
-      const isDirect = prev !== undefined ? prev : false;
-      const ct: CachedTool = { name: baseName, description: resource.description };
-      newTools.push({
-        name: baseName,
-        description: resource.description ?? `Read resource: ${resource.uri}`,
-        isDirect,
-        wasDirect: prev !== undefined ? server.tools.find((t) => t.name === baseName)?.wasDirect ?? false : false,
-        estimatedTokens: estimateTokens(ct),
-      });
+    if (server.exposeResources) {
+      for (const resource of entry.resources ?? []) {
+        const baseName = `get_${resourceNameToToolName(resource.name)}`;
+        if (isToolExcluded(baseName, server.name, this.prefix, server.excludeTools)) {
+          continue;
+        }
+
+        const prev = existingState.get(baseName);
+        const isDirect = prev !== undefined ? prev : false;
+        const ct: CachedTool = { name: baseName, description: resource.description };
+        newTools.push({
+          name: baseName,
+          description: resource.description ?? `Read resource: ${resource.uri}`,
+          isDirect,
+          wasDirect: prev !== undefined ? server.tools.find((t) => t.name === baseName)?.wasDirect ?? false : false,
+          estimatedTokens: estimateTokens(ct),
+        });
+      }
     }
 
     server.tools = newTools;
@@ -539,6 +569,12 @@ class McpPanel {
     }
 
     lines.push(emptyRow());
+    if (this.noticeLines.length > 0) {
+      for (const notice of this.noticeLines) {
+        lines.push(row(fg(t.hint, italic(notice))));
+      }
+      lines.push(emptyRow());
+    }
     lines.push(divider());
 
     if (this.servers.length === 0) {
@@ -708,6 +744,7 @@ export function createMcpPanel(
   callbacks: McpPanelCallbacks,
   tui: { requestRender(): void },
   done: (result: McpPanelResult) => void,
+  options?: { noticeLines?: string[] },
 ): McpPanel & { dispose(): void } {
-  return new McpPanel(config, cache, provenance, callbacks, tui, done);
+  return new McpPanel(config, cache, provenance, callbacks, tui, done, options?.noticeLines ?? []);
 }
