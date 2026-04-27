@@ -1,8 +1,13 @@
 // metadata-cache.ts - Persistent MCP metadata cache
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
+
+/** Resolves the Pi agent directory, respecting PI_CODING_AGENT_DIR if set. */
+function getAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+}
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpTool, McpResource, ServerEntry, ToolMetadata } from "./types.js";
 import { formatToolName, isToolExcluded } from "./types.js";

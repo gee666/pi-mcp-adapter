@@ -37,11 +37,14 @@ export interface AuthEntry {
   serverUrl?: string; // Track the URL these credentials are for
 }
 
-// Base directory for auth storage - can be overridden via env var for testing
+// Base directory for auth storage.
+// Respects PI_CODING_AGENT_DIR (the Pi agent dir override) first.
+// Falls back to MCP_OAUTH_DIR for test overrides, then ~/.pi/agent/mcp-oauth.
 function getAuthBaseDir(): string {
-  return process.env.MCP_OAUTH_DIR 
-    ? process.env.MCP_OAUTH_DIR 
-    : join(homedir(), '.pi', 'agent', 'mcp-oauth');
+  if (process.env.PI_CODING_AGENT_DIR) {
+    return join(process.env.PI_CODING_AGENT_DIR, 'mcp-oauth');
+  }
+  return process.env.MCP_OAUTH_DIR ?? join(homedir(), '.pi', 'agent', 'mcp-oauth');
 }
 
 /**

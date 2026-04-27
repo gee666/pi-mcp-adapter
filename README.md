@@ -19,7 +19,7 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 ## Install
 
 ```bash
-pi install npm:pi-mcp-adapter
+pi install npm:oira666_pi-mcp-adapter@latest
 ```
 
 Restart Pi after installation.
