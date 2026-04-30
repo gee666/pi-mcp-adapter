@@ -1,3 +1,7 @@
+> ⚠️ **DEPRECATED** — This fork is no longer maintained.
+> The feature this fork provided has been implemented upstream in [original-repo](https://github.com/nicobailon/pi-mcp-adapter).
+> Please migrate to the upstream repository.
+
 <p>
   <img src="banner.png" alt="pi-mcp-adapter" width="1100">
 </p>
